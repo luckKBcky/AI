@@ -1,3 +1,7 @@
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
 from fastapi import HTTPException, APIRouter
 from sse_starlette import EventSourceResponse
 # from common import client
@@ -25,6 +29,7 @@ root_router = APIRouter()
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 llm = ChatOpenAI(model="gpt-4o")
 
+print(config.DB_HOST + " " + config.DATABASE + " " + config.USER + " "  + config.PASSWORD)
 
 def get_card_data():
 
@@ -36,7 +41,7 @@ def get_card_data():
             user=config.USER,
             password=config.PASSWORD
         )
-
+        
         if connection.is_connected():
             print("데이터베이스에 성공적으로 연결되었습니다.")
 
@@ -92,19 +97,16 @@ custom_rag_prompt = PromptTemplate.from_template(template)
 
 @root_router.get("/prompt")
 async def recipe_stream(
-    ingredients: str,
-    diseases: str,
-    dislikeIngredients: str,
+    user_id: int,
     prompt: str,
-    threadId: str
 ):
-    return EventSourceResponse(get_recipe_stream(ingredients, diseases, dislikeIngredients, prompt, threadId))
+    return EventSourceResponse(get_info(user_id, prompt))
 
 def format_docs(docs):
         return "\n\n".join(doc.page_content for doc in docs)
 
 
-def get_info(user_id: int, prompt: str):
+async def get_info(user_id: int, prompt: str):
 
     rag_chain_from_docs = (
         RunnablePassthrough.assign(context=(lambda x: format_docs(x["context"])))
@@ -119,10 +121,8 @@ def get_info(user_id: int, prompt: str):
     for chunk in rag_chain_with_source.stream("트래블러스 kb pay 혜택"):
         for key in chunk:
             if key == "answer":
-                print(chunk[key], end="")
-                if chunk[key] == "." :
-                    print("")
-    return 1
+                yield chunk[key]
+                await asyncio.sleep(0.05)
 
 
 
