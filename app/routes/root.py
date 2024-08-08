@@ -29,8 +29,6 @@ root_router = APIRouter()
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 llm = ChatOpenAI(model="gpt-4o")
 
-print(config.DB_HOST + " " + config.DATABASE + " " + config.USER + " "  + config.PASSWORD)
-
 def get_card_data():
 
     try:
@@ -38,8 +36,8 @@ def get_card_data():
         connection = mysql.connector.connect(
             host=config.DB_HOST,
             database=config.DATABASE,
-            user=config.USER,
-            password=config.PASSWORD
+            user=config.DB_USER,
+            password=config.DB_PASSWORD
         )
         
         if connection.is_connected():
