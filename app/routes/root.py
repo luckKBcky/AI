@@ -32,8 +32,109 @@ import mysql.connector
 __import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+db = SQLDatabase.from_uri(f"mysql+pymysql://{config.DB_USER}:{config.DB_PASSWORD}@{config.DB_HOST}:3306/{config.DATABASE}")
+
+# 영어 키와 그에 대응하는 한글 항목들
+english_to_korean_map = {
+    'food': '식비',
+    'etc': '기타',
+    'allowance': '용돈',
+    'leisure': '여가',
+    'clothing': '옷',
+    'dating': '데이트',
+    'savings': '저축',
+    'beauty': '미용',
+    'studies': '학업',
+    'convenience': '편의'
+}
+
+def get_card_data():
+
+    try:
+        # 데이터베이스 연결
+        connection = mysql.connector.connect(
+            host=config.DB_HOST,
+            database=config.DATABASE,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD
+        )
+        
+        if connection.is_connected():
+            print("데이터베이스에 성공적으로 연결되었습니다.")
+
+            # 커서 생성
+            cursor = connection.cursor()
+
+            # 모든 데이터 조회 쿼리
+            query = "SELECT title, excerpt, content FROM kb_card"
+
+            # 쿼리 실행
+            cursor.execute(query)
+
+            # 결과 가져오기
+            return cursor.fetchall()
+
+    except Error as e:
+        print(f"DB Error: {e}")
+
+    finally:
+        # 연결 종료
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+            print("MySQL 연결이 종료되었습니다.")
 
 
+def get_pay_info(month: int):
+
+    try:
+        # 데이터베이스 연결
+        connection = mysql.connector.connect(
+            host=config.DB_HOST,
+            database=config.DATABASE,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD
+        )
+        
+        if connection.is_connected():
+            
+            cursor = connection.cursor()
+            query = f"""
+                SELECT
+                    B.category,
+                    IFNULL(A.amount, 0) AS amount
+                FROM
+                (SELECT 
+                    category, -1 * SUM(amount) AS amount  
+                FROM transactions
+                WHERE MONTH(DATE) = {month} AND amount < 0 GROUP BY category) A 
+                RIGHT OUTER JOIN (SELECT category FROM transactions GROUP BY category) B ON A.category = B.category
+                ORDER BY amount DESC
+            """
+
+            # 쿼리 실행
+            cursor.execute(query)
+            
+            query_response = cursor.fetchall()
+            final_dict = {
+                english: {
+                    'name': korean,
+                    'amount': next((amount for k, amount in query_response if k == korean), 0)
+                }
+                for english, korean in english_to_korean_map.items()
+            }
+
+            # 결과 가져오기
+            return dict(sorted(final_dict.items(), key=lambda item: item[1]['amount'], reverse=True))
+
+    except Error as e:
+        print(f"DB Error: {e}")
+
+    finally:
+        # 연결 종료
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
 
 def get_card_data():
 
@@ -83,7 +184,6 @@ docs = [Document(
 ) for record in records]
 
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-# Retrieve and generate using the relevant snippets of the blog.
 splits = text_splitter.split_documents(docs)
 vectorstore = Chroma.from_documents(documents=splits, embedding=OpenAIEmbeddings())
 retriever = vectorstore.as_retriever()
@@ -95,10 +195,12 @@ template = """
 특히 카드 정보의 경우 몇 %를 적립할 수 있으며 할인 받을 수 있는 지 위주로 집중적으로 암기하여 대답하세요.
 5문장 이상으로 최대한 자세히 답변해주세요.
 
-다음과 같은 절차를 따라 대답하세요.
 
+다음 사항을 고려해서 최적의 대답을 제공하세요.
 1. 만약 지출 내역에 대한 단순 조회 질문이라면 카드 추천은 하지 않고 지출 내역에 대한 정보만 대답하세요.
-2. 최소 한 달 이상의 지출 내역에 대한 통계를 기반으로 카드 추천을 진행해주세요.
+1-1) 최소 한 달 이상의 지출 내역에 대한 통계를 기반으로 카드 추천을 진행해주세요.
+2. 만일 단순 카드 관련 질문이라면, 질문한 카드에 대해 자세하게 설명해주세요.
+2-1) 만약 특정 카드를 지칭하지 않았다면, 임의로 제공하세요.
 
 {context}
 
@@ -128,6 +230,12 @@ def format_docs(docs):
         return "\n\n".join(doc.page_content for doc in docs)
 
 
+@root_router.get("/getJSON")
+def get_info_JSON(month: int):
+
+    return get_pay_info(month)
+
+
 async def get_info(user_id: int, prompt: str):
 
     rag_chain_from_docs = (
@@ -151,28 +259,6 @@ async def get_info(user_id: int, prompt: str):
 
 async def get_info2(user_id: int, prompt: str):
 
-    # rag_chain_from_docs = (
-    #     RunnablePassthrough.assign(context=(lambda x: format_docs(x["context"])))
-    #     | custom_rag_prompt
-    #     | llm
-    #     | StrOutputParser()
-    # )
-    
-    # rag_chain_with_source = RunnableParallel(
-    #     {"context": retriever, "question": RunnablePassthrough()}
-    # ).assign(answer=rag_chain_from_docs)
-
-
-    # for chunk in rag_chain_with_source.stream("트래블러스 kb pay 혜택"):
-    #     for key in chunk:
-    #         if key == "answer":
-    #             yield chunk[key]
-    #             await asyncio.sleep(0.05)
-    # dialect+driver://username:password@host:port/database
-    db = SQLDatabase.from_uri(f"mysql+pymysql://{config.DB_USER}:{config.DB_PASSWORD}@{config.DB_HOST}:3306/{config.DATABASE}")
-    db.run("SELECT * FROM transactions LIMIT 10;")
-    agent = create_sql_agent(llm, db=db, agent_type="openai-tools", verbose=False)
-
     examples = [
         {"prompt": "내 user_id가 5일 때 올해 용돈 얼마나 받았어?.", "query": "SELECT SUM(amount) FROM transactions where user_id = 5 and year(date) = year(NOW()) and category = '용돈';"},
         {
@@ -190,6 +276,40 @@ async def get_info2(user_id: int, prompt: str):
         {
             "prompt": "내 user_id가 5일 때 2021년 1월 지출 내역 보여줘.",
             "query": "SELECT * FROM transactions where user_id = 5 and year(date) = 2021 and  month(date) = 1 and amount < 0;",
+        },
+        {
+            "prompt": "내 user_id가 5일 때 2021년 1월 지출 통계 보여줘.",
+            "query": "SELECT category, SUM(amount) as amount FROM transactions where user_id = 5 and year(date) = 2021 and  month(date) = 1 and amount < 0 GROUP BY category;",
+        },
+
+        {
+            "prompt": "내 user_id가 5일 때 지난 6개월간 통계 보여줘.",
+            "query": """SELECT 
+                            category, 
+                            SUM(amount) AS amount 
+                        FROM 
+                            transactions 
+                        WHERE 
+                            user_id = 5 
+                            AND date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH) 
+                            AND amount < 0 
+                        GROUP BY 
+                            category;""",
+        },
+        {
+            "prompt": "내 user_id가 5일 때 저번 달 통계 보여줘.",
+            "query": """SELECT 
+                            category, 
+                            SUM(amount) AS amount 
+                        FROM 
+                            transactions 
+                        WHERE 
+                            user_id = 5 
+                            AND YEAR(date) = YEAR(CURRENT_DATE - INTERVAL 1 MONTH) 
+                            AND MONTH(date) = MONTH(CURRENT_DATE - INTERVAL 1 MONTH) 
+                            AND amount < 0 
+                        GROUP BY 
+                            category;""",
         },
     ]
 
@@ -243,7 +363,7 @@ async def get_info2(user_id: int, prompt: str):
         "input": "How many arists are there",
         "top_k": 10,
         "dialect": "SQLite",
-        "user_id": 5
+        "user_id": 5,
         "agent_scratchpad": [],
     })
 
@@ -255,7 +375,7 @@ async def get_info2(user_id: int, prompt: str):
         agent_type="openai-tools",
     )
 
-    print(type(agent))
+
 
 
 
