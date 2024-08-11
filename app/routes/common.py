@@ -46,7 +46,7 @@ def get_card_data():
             cursor = connection.cursor()
 
             # 모든 데이터 조회 쿼리
-            query = "SELECT title, excerpt, content FROM kb_card"
+            query = "SELECT title, excerpt, img_url, content FROM kb_card"
 
             # 쿼리 실행
             cursor.execute(query)
@@ -70,9 +70,14 @@ llm = ChatOpenAI(model="gpt-4o")
 records = get_card_data()
 
 docs = [Document(
-    metadata={"input": "", "query" : "","title": record[0], "excerpt" : record[1], "language" : "ko"},
-    page_content=record[2]
+    metadata={"input": "", "query" : "","title": record[0], "excerpt" : record[1], "img_url": record[2], "language" : "ko"},
+    page_content= "img_url: " + record[2] + "\n" + record[3]
 ) for record in records]
+
+img_dict = {
+    record[0].replace("[KB국민카드]", "").replace("혜택 정리", "").strip() : record[2]
+ for record in records
+ }
 
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 splits = text_splitter.split_documents(docs)

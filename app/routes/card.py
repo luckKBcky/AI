@@ -20,7 +20,7 @@ from langchain_core.prompts import (
     PromptTemplate,
     SystemMessagePromptTemplate,
 )
-from routes.common import llm, vectorstore, retriever, korean_to_english_map
+from routes.common import llm, vectorstore, retriever, korean_to_english_map, img_dict
 import json
 import asyncio
 import time
@@ -109,23 +109,30 @@ def card_recommend(user_id: int):
 
     각 TOP3의 카테고리에 적합한 카드를 추천해주세요.
     특히 몇 %를 적립할 수 있으며 할인 받을 수 있는 지를 계산하여 아래 예시와 같은 tuple 배열 형식으로 대답하세요.
-    무조건 아래 예시와 같은 tuple 배열 형식으로 대답하세요. 절대 주어진 예시 외 다른 tuple index는 추가하지 마세요.
+    아래 예시와 내용을 똑같이 추천하지 마세요.
+    무조건 tuple 배열 형식으로 대답하세요. 
+    절대 주어진 예시 외 다른 tuple index는 추가하지 마세요.
     
+    예시:
     [
         [('category1', 식비),
-            ("card_title", "쿠팡 와우 카드"),
-            ("summary_card_benefit", "쿠팡, 쿠팡이츠, 쿠팡플레이 2% 쿠팡캐시 적립"),
-            ("money_benefit", "연 9,700원의 혜택을 받을 수 있어요!")],
+            ("card_title", "마이핏카드(할인형)"),
+            ("summary_card_benefit", "외식/커피 5% 할인, 쇼핑/배달 5% 할인"),
+            ("money_benefit", "연 9,700원의 혜택을 받을 수 있어요!"),
+            ("img_url", "https://blog.kakaocdn.net/dn/b8gQfN/btsIOIn0PKk/OvgmG3apUU6iFBaoRtPrsk/img.png")],
         [("category2", 여가)
             ("card_title", "트래블러스 체크카드"),
             ("summary_card_benefit", "해외 이용 수수료 1.25% 면제, 철도 할인 5,000원"),
-            ("money_benefit", "연 10,000원의 혜택을 받을 수 있어요!)]
+            ("money_benefit", "연 10,000원의 혜택을 받을 수 있어요!),
+            ("img_url", "https://blog.kakaocdn.net/dn/uT1PK/btsHjcD9Lfk/j4TQyDep0L8rUSkmbTfQKk/img.png")]
         ,
             [("category3", "편의"),
             ("card_title", "데일리 WE:SH 카드"),
             ("summary_card_benefit", "국내 가맹점 0.5%, 편의점,커피,올리브영 10%"),
-            ("money_benefit", "연 3,200원의 혜택을 받을 수 있어요!)]
+            ("money_benefit", "연 3,200원의 혜택을 받을 수 있어요!),
+            ("img_url", "https://blog.kakaocdn.net/dn/oCums/btsHjZd3Ukg/JhpHW07Mmv5T7LIkMm413k/img.png")]
     ]
+
 
     {context}
 
@@ -144,16 +151,23 @@ def card_recommend(user_id: int):
     rag_response = rag_chain.invoke("각 TOP3 카테고리에 대해 나에게 적합한 카드 추천해줘.")
     tuple_array = ast.literal_eval(rag_response)
 
-    result_dict = {}
+    result_list = []
 
     for item in tuple_array:
         korean_category = item[0][1]
-        english_category = korean_to_english_map.get(korean_category, korean_category)  # 매칭이 없을 경우 한국어 그대로 사용
+        english_category = korean_to_english_map.get(korean_category, korean_category)
         card_info = {k: v for k, v in item[1:]}
-        result_dict[english_category] = card_info
+        card_info["type"] = english_category
+        card_info["name"] = korean_category
+        if card_info["card_title"] in img_dict:
+            card_info["img_url"] = img_dict[card_info["card_title"]]
+        else:
+            card_info["img_url"] = "https://ibb.co/w4mMc65"
+
+        result_list.append(card_info)
 
     # 결과 출력
-    return result_dict
+    return result_list
     
     
 

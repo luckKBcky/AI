@@ -22,7 +22,7 @@ from langchain_core.prompts import (
     PromptTemplate,
     SystemMessagePromptTemplate,
 )
-from routes.common import llm, vectorstore, retriever
+from routes.common import llm, vectorstore, retriever, english_to_korean_map
 from routes.card import card_router
 
 
@@ -253,11 +253,10 @@ async def get_info(user_id: int, input: str):
         당신은 KB국민은행에 대한 질문에 답변하는 작업을 돕는 최고의 은행원입니다.
         다음에 제공된 맥락을 사용하여 질문에 한국말로 답변하십시오.
         절대 markdown 문법으로 작성하지 마세요.
-        절대 user_id, No Query와 같은 개발 용어를 사용하지 마세요.
+        절대 user_id, No Query, DB, Table와 같은 개발 용어를 사용하지 마세요.
     
 
         특히 카드 정보의 경우 몇 %를 적립할 수 있으며 할인 받을 수 있는 지 위주로 집중적으로 암기하여 대답하세요.
-        5문장 이상으로 최대한 자세히 답변해주세요.
 
         최소 한 달 이상의 지출 내역에 대한 통계를 기반으로 카드 추천을 진행해주세요.
         사용자의 질문은 """ + input + "이며 그에 대한 DB 조회 결과는" + query_response + """입니다.
