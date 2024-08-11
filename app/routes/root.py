@@ -6,12 +6,10 @@ from langchain_openai import ChatOpenAI
 from langchain import hub
 import os
 from langchain_community.utilities import SQLDatabase
-from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_chroma import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough
-from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
@@ -24,6 +22,10 @@ from langchain_core.prompts import (
     PromptTemplate,
     SystemMessagePromptTemplate,
 )
+from routes.common import llm, vectorstore, retriever
+from routes.card import card_router
+
+
 import json
 import asyncio
 import time
@@ -32,21 +34,12 @@ import mysql.connector
 __import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-db = SQLDatabase.from_uri(f"mysql+pymysql://{config.DB_USER}:{config.DB_PASSWORD}@{config.DB_HOST}:3306/{config.DATABASE}")
 
+root_router = APIRouter()
+root_router.include_router(card_router,  prefix="/card")
+
+db = SQLDatabase.from_uri(f"mysql+pymysql://{config.DB_USER}:{config.DB_PASSWORD}@{config.DB_HOST}:3306/{config.DATABASE}")
 # 영어 키와 그에 대응하는 한글 항목들
-english_to_korean_map = {
-    'food': '식비',
-    'etc': '기타',
-    'allowance': '용돈',
-    'leisure': '여가',
-    'clothing': '옷',
-    'dating': '데이트',
-    'savings': '저축',
-    'beauty': '미용',
-    'studies': '학업',
-    'convenience': '편의'
-}
 
 examples = [
     {"input": "내 user_id가 5일 때 올해 용돈 얼마나 받았어?.", "query": "SELECT SUM(amount) FROM transactions where user_id = 5 and year(date) = year(NOW()) and category = '용돈';"},
@@ -95,6 +88,24 @@ examples = [
                     GROUP BY 
                         category;""",
     },
+    {
+        "input": "내 user_id가 5일 때 어디에 가장 많이 지출했어?",
+        "query": """SELECT 
+                        category, 
+                        SUM(amount) AS total_amount 
+                    FROM 
+                        transactions 
+                    WHERE 
+                        user_id = 5 
+                        AND date >= DATE_ADD(CURRENT_DATE, INTERVAL -6 MONTH) 
+                        AND amount < 0 
+                    GROUP BY 
+                        category 
+                    ORDER BY 
+                        total_amount ASC 
+                    LIMIT 1;
+                    """,
+    },
     ]
 
 example_selector = SemanticSimilarityExampleSelector.from_examples(
@@ -134,42 +145,6 @@ few_shot_prompt = FewShotPromptTemplate(
     prefix=system_prefix,
     suffix="",
 )
-
-def get_card_data():
-
-    try:
-        # 데이터베이스 연결
-        connection = mysql.connector.connect(
-            host=config.DB_HOST,
-            database=config.DATABASE,
-            user=config.DB_USER,
-            password=config.DB_PASSWORD
-        )
-        
-        if connection.is_connected():
-            print("데이터베이스에 성공적으로 연결되었습니다.")
-
-            # 커서 생성
-            cursor = connection.cursor()
-
-            # 모든 데이터 조회 쿼리
-            query = "SELECT title, excerpt, content FROM kb_card"
-
-            # 쿼리 실행
-            cursor.execute(query)
-
-            # 결과 가져오기
-            return cursor.fetchall()
-
-    except Error as e:
-        print(f"DB Error: {e}")
-
-    finally:
-        # 연결 종료
-        if connection.is_connected():
-            cursor.close()
-            connection.close()
-            print("MySQL 연결이 종료되었습니다.")
 
 
 def get_pay_info(month: int):
@@ -223,58 +198,6 @@ def get_pay_info(month: int):
             cursor.close()
             connection.close()
 
-def get_card_data():
-
-    try:
-        # 데이터베이스 연결
-        connection = mysql.connector.connect(
-            host=config.DB_HOST,
-            database=config.DATABASE,
-            user=config.DB_USER,
-            password=config.DB_PASSWORD
-        )
-        
-        if connection.is_connected():
-            print("데이터베이스에 성공적으로 연결되었습니다.")
-
-            # 커서 생성
-            cursor = connection.cursor()
-
-            # 모든 데이터 조회 쿼리
-            query = "SELECT title, excerpt, content FROM kb_card"
-
-            # 쿼리 실행
-            cursor.execute(query)
-
-            # 결과 가져오기
-            return cursor.fetchall()
-
-    except Error as e:
-        print(f"DB Error: {e}")
-
-    finally:
-        # 연결 종료
-        if connection.is_connected():
-            cursor.close()
-            connection.close()
-            print("MySQL 연결이 종료되었습니다.")
-
-root_router = APIRouter()
-client = OpenAI(api_key=config.OPENAI_API_KEY)
-llm = ChatOpenAI(model="gpt-4o")
-
-records = get_card_data()
-
-docs = [Document(
-    metadata={"input": "", "query" : "","title": record[0], "excerpt" : record[1], "language" : "ko"},
-    page_content=record[2]
-) for record in records]
-
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-splits = text_splitter.split_documents(docs)
-vectorstore = Chroma(collection_name="card").from_documents(documents=splits, embedding=OpenAIEmbeddings())
-retriever = vectorstore.as_retriever()
-
 
 @root_router.get("/prompt")
 async def query_stream(
@@ -285,21 +208,12 @@ async def query_stream(
 
 
 
-@root_router.get("/test")
-async def query_stream2(
-    user_id: int,
-    input_data: str,
-):
-    return EventSourceResponse(test(user_id, input_data))
-
-
 def format_docs(docs):
         return "\n\n".join(doc.page_content for doc in docs)
 
 
 @root_router.get("/getJSON")
 def get_info_JSON(month: int):
-
     return get_pay_info(month)
 
 
@@ -379,7 +293,7 @@ if __name__ == "__main__":
     
     # 시작 시간 기록
     start_time = time.time()
-    test(5, "아아아")
+    get_info(5, "아아아")
 
     # 종료 시간 기록
     end_time = time.time()
